@@ -127,8 +127,23 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const PORT = process.env.PORT || 5000;
 // Ruta raíz para evitar el "Cannot GET /"
+// Ruta raíz para evitar el "Cannot GET /"
 app.get('/', (req, res) => {
   res.json({ ok: true, message: '✅ Ethiqia API funcionando correctamente' });
+});
+
+// ✅ NUEVA RUTA DE ESTADO GENERAL
+app.get('/api/health', (req, res) => {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const dbState = states[mongoose.connection.readyState] || 'unknown';
+
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || 'production',
+    mongo: dbState,
+    timestamp: new Date().toISOString(),
+    message: '✅ Ethiqia backend funcionando correctamente'
+  });
 });
 
 app.listen(PORT, ()=> console.log('Ethiqia backend listening on :' + PORT));
