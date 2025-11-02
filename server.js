@@ -126,4 +126,9 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const PORT = process.env.PORT || 5000;
+// Ruta raíz para evitar el "Cannot GET /"
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: '✅ Ethiqia API funcionando correctamente' });
+});
+
 app.listen(PORT, ()=> console.log('Ethiqia backend listening on :' + PORT));
