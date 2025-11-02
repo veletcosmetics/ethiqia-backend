@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -8,9 +9,6 @@ import multer from 'multer';
 import path from 'path';
 import mongoose from 'mongoose';
 import OpenAI from 'openai';
-import authRoutes from './routes/auth.js';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
 
 dotenv.config();
 const app = express();
@@ -18,37 +16,19 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(morgan('dev'));
 
-// Rutas de autenticación
-app.use('/api/auth', authRoutes);
-
 const useMongo = !!process.env.MONGO_URI;
 let User, Post;
 
 if (useMongo) {
   const userSchema = new mongoose.Schema({
-    name: String,
-    email: { type: String, unique: true },
-    passwordHash: String,
-    score: { type: Number, default: 50 },
-    createdAt: { type: Date, default: Date.now }
+    name: String, email: { type: String, unique: true }, passwordHash: String, score: { type: Number, default: 50 }, createdAt: { type: Date, default: Date.now }
   });
-
   const postSchema = new mongoose.Schema({
-    authorId: String,
-    text: String,
-    mediaUrl: String,
-    mediaType: String,
-    authenticity: { label: String, probability_ai: Number },
-    createdAt: { type: Date, default: Date.now }
+    authorId: String, text: String, mediaUrl: String, mediaType: String, authenticity: { label: String, probability_ai: Number }, createdAt: { type: Date, default: Date.now }
   });
-
-  // ✅ Reutiliza modelos si ya están compilados
-  User = mongoose.models.User || mongoose.model('User', userSchema);
-  Post = mongoose.models.Post || mongoose.model('Post', postSchema);
-
-  mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(e => console.warn('MongoDB error', e.message));
+  User = mongoose.model('User', userSchema);
+  Post = mongoose.model('Post', postSchema);
+  mongoose.connect(process.env.MONGO_URI).then(()=>console.log('MongoDB connected')).catch(e=>console.warn('MongoDB error', e.message));
 } else {
   console.warn('Running WITHOUT MongoDB (in-memory demo storage). Set MONGO_URI to use Mongo.');
   const mem = { users: [], posts: [] };
@@ -79,7 +59,8 @@ function auth(req,res,next){
   }catch(e){ res.status(401).json({ error: 'Invalid token' }); }
 }
 
-// Registro
+app.get('/api/health', (req,res)=> res.json({ ok:true, env: process.env.NODE_ENV || 'production', ts: Date.now() }));
+
 app.post('/api/auth/register', async (req,res)=>{
   const { name, email, password } = req.body;
   if(!name || !email || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -90,9 +71,79 @@ app.post('/api/auth/register', async (req,res)=>{
   res.json({ ok:true, user: { id: u._id, name: u.name, email: u.email, score: u.score } });
 });
 
-// Login
 app.post('/api/auth/login', async (req,res)=>{
   const { email, password } = req.body;
   const u = await User.findOne({ email });
   if(!u) return res.status(400).json({ error: 'Invalid credentials' });
-  const ok = awai
+  const ok = await bcrypt.compare(password, u.passwordHash);
+  if(!ok) return res.status(400).json({ error: 'Invalid credentials' });
+  const token = jwt.sign({ uid: u._id }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user: { id: u._id, name: u.name, email: u.email, score: u.score } });
+});
+
+app.post('/api/ai/moderate', async (req,res)=>{
+  try{
+    const text = (req.body?.text || '').toString().slice(0, 5000);
+    if(!AI_ENABLED || !openai){
+      return res.json({ allowed: true, flags: [], model: 'fallback' });
+    }
+    const resp = await openai.moderations.create({ model: 'omni-moderation-latest', input: text });
+    const r = resp.results?.[0];
+    const flags = Object.entries(r?.categories||{}).filter(([k,v])=>v).map(([k])=>k);
+    res.json({ allowed: !r?.flagged, flags, model: 'omni-moderation-latest' });
+  }catch(e){ res.status(500).json({ error: e.message }); }
+});
+
+function estimateAuthenticity(filename, mediaType){
+  if(!filename) return { label: 'real', probability_ai: 0.05 };
+  let sum = 0; for(const c of filename) sum = (sum + c.charCodeAt(0)) % 1000;
+  const p = Math.round((0.15 + 0.7 * (sum/1000)) * 100) / 100;
+  let label = 'uncertain'; if(p > 0.7) label = 'ai'; if(p < 0.3) label = 'real';
+  return { label, probability_ai: p };
+}
+
+app.get('/api/posts', async (req,res)=>{
+  const list = await Post.find();
+  res.json(list);
+});
+
+app.post('/api/posts', auth, upload.single('media'), async (req,res)=>{
+  const text = req.body?.text || '';
+  let mediaUrl = '', mediaType = '';
+  if(req.file){
+    mediaUrl = `/uploads/${req.file.filename}`;
+    mediaType = (req.file.mimetype||'').startsWith('video') ? 'video' : 'image';
+  }
+  const authenticity = estimateAuthenticity(req.file?.filename || '', mediaType);
+  const p = await Post.create({ authorId: req.uid, text, mediaUrl, mediaType, authenticity, createdAt: new Date() });
+  res.json(p);
+});
+
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const PORT = process.env.PORT || 5000;
+// Ruta raíz para evitar el "Cannot GET /"
+// Ruta raíz para evitar el "Cannot GET /"
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: '✅ Ethiqia API funcionando correctamente' });
+});
+
+// ✅ NUEVA RUTA DE ESTADO GENERAL
+app.get('/api/health', (req, res) => {
+  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const dbState = states[mongoose.connection.readyState] || 'unknown';
+
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || 'production',
+    mongo: dbState,
+    timestamp: new Date().toISOString(),
+    message: '✅ Ethiqia backend funcionando correctamente'
+  });
+});
+
+app.listen(PORT, ()=> console.log('Ethiqia backend listening on :' + PORT));
