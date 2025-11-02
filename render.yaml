@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: ethiqia-backend
+    env: node
+    region: frankfurt
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "npm start"
+    autoDeploy: true
